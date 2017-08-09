@@ -167,12 +167,33 @@ final class GrpcServicePrinter(service: ServiceDescriptor, override val params: 
 
     p.addStringMargin(
       s"""val ${method.descriptorName}: $grpcMethodDescriptor[${method.scalaIn}, ${method.scalaOut}] =
-          |  $grpcMethodDescriptor.create(
-          |    $grpcMethodDescriptor.MethodType.$methodType,
-          |    $grpcMethodDescriptor.generateFullMethodName("${service.getFullName}", "${method.getName}"),
-          |    ${marshaller(method.scalaIn)},
-          |    ${marshaller(method.scalaOut)})
+          |  $grpcMethodDescriptor.newBuilder()
+          |    .setType($grpcMethodDescriptor.MethodType.$methodType)
+          |    .setFullMethodName($grpcMethodDescriptor.generateFullMethodName("${service.getFullName}", "${method.getName}"))
+          |    .setRequestMarshaller(${marshaller(method.scalaIn)})
+          |    .setResponseMarshaller(${marshaller(method.scalaOut)})
+          |    .build()
           |""")
+  }
+
+  private[this] def serviceDescriptor(service: ServiceDescriptor) = {
+
+    val grpcServiceDescriptor = "_root_.io.grpc.ServiceDescriptor"
+
+    PrinterEndo(
+      _.add(s"val ${service.descriptorName}: $grpcServiceDescriptor =")
+        .indent
+        .add(s"""$grpcServiceDescriptor.newBuilder("${service.getFullName}")""")
+        .indent
+        .add(s""".setSchemaDescriptor(new _root_.com.trueaccord.scalapb.grpc.ConcreteProtoFileDescriptorSupplier(${service.getFile.fileDescriptorObjectFullName}.javaDescriptor))""")
+        .print(service.methods) { case (p, method) =>
+          p.add(s".addMethod(${method.descriptorName})")
+        }
+        .add(".build()")
+        .outdent
+        .outdent
+        .newline
+    )
   }
 
   private[this] def addMethodImplementation(method: MethodDescriptor): PrinterEndo = PrinterEndo {
@@ -231,7 +252,7 @@ final class GrpcServicePrinter(service: ServiceDescriptor, override val params: 
     PrinterEndo(
       _.add(s"""def bindService(serviceImpl: ${service.name}, $executionContext: scala.concurrent.ExecutionContext): $serverServiceDef =""")
         .indent
-        .add(s"""$serverServiceDef.builder("${service.getFullName}")""")
+        .add(s"""$serverServiceDef.builder(${service.descriptorName})""")
         .call(methods: _*)
         .add(".build()")
         .outdent)
@@ -244,6 +265,7 @@ final class GrpcServicePrinter(service: ServiceDescriptor, override val params: 
       s"object ${service.objectName} {")
     .indent
     .call(service.methods.map(methodDescriptor): _*)
+    .call(serviceDescriptor(service))
     .call(serviceTrait)
     .newline
     .call(serviceTraitCompanion)
